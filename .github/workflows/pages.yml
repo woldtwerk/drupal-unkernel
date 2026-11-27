@@ -9,6 +9,9 @@ permissions:
   contents: read
   pages: write
   id-token: write
+env:
+  # Subpath of the project site; set to "" for a user site or custom domain.
+  BASE_PATH: /${{ github.event.repository.name }}
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -36,6 +39,7 @@ jobs:
           cp web/index.html _site/index.html
           cp web/index.html _site/404.html
           touch _site/.nojekyll
+          sed -i "s#\"/_shell/#\"${BASE_PATH}/_shell/#g" _site/index.html _site/404.html _site/_shell/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

@@ -11,8 +11,8 @@ async function sh(vm, script) {
   return r.stdout;
 }
 
-/** Mount the image's trees at the paths the site was installed with, start php -S, wait for it. */
-export async function startDrupal(vm, log = () => {}) {
+/** Mount the image's trees at the paths the site was installed with, start php -S (under base), wait for it. */
+export async function startDrupal(vm, log = () => {}, base = "") {
   // The image (label kwdata) is mounted at /data by unkernel's init.
   await sh(vm, [
     "mountpoint -q /data || { echo 'drupal image not mounted at /data' >&2; exit 1; }",
@@ -23,9 +23,34 @@ export async function startDrupal(vm, log = () => {}) {
   ].join(" && "));
   log((await vm.exec(PHP[0], [...PHP.slice(1), "-v"])).stdout.split("\n")[0]);
 
+  return phpServer(vm, { base, log });
+}
+
+/**
+ * php -S in the guest, wait until it listens. Base "" runs Drupal's own router; base "/x" (a subpath such as
+ * GitHub Pages' /<repo>) needs our own: .ht.router.php forces SCRIPT_NAME=/index.php, i.e. base path "/".
+ * /srv/x → /app/web, so DOCUMENT_ROOT + the request path finds real files; everything else runs index.php as /x/index.php.
+ */
+export async function phpServer(vm, { base = "", log = () => {} } = {}) {
+  let docroot = "/app/web";
+  let router = "/app/web/.ht.router.php";
+  if (base) {
+    if (!/^(\/[A-Za-z0-9._-]+)+$/.test(base)) throw new Error(`bad base path: ${base}`);
+    docroot = "/srv";
+    router = "/srv/.router.php";
+    await sh(vm, `mkdir -p /srv && ln -sfn /app/web /srv${base} && cat > ${router} <<'EOF'
+<?php
+$base = '${base}';
+$path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+if ($path !== $base . '/' && is_file($_SERVER['DOCUMENT_ROOT'] . $path)) return false;
+$_SERVER['SCRIPT_FILENAME'] = $_SERVER['DOCUMENT_ROOT'] . $base . '/index.php';
+$_SERVER['SCRIPT_NAME'] = $_SERVER['PHP_SELF'] = $base . '/index.php';
+require $_SERVER['SCRIPT_FILENAME'];
+EOF`);
+  }
   // -d: the CLI SAPI forces output_buffering=0 over php.ini; Drupal wants it on.
   const server = await vm.spawn(PHP[0], [...PHP.slice(1), "-d", "output_buffering=4096", "-S", `0.0.0.0:${GUEST_PORT}`,
-    "-t", "/app/web", "/app/web/.ht.router.php"], { pty: false, cwd: "/app/web" });
+    "-t", docroot, router], { pty: false, cwd: "/app/web" });
   const dec = new TextDecoder();
   server.stdout.pipeTo(new WritableStream({ write: (b) => log(dec.decode(b).trimEnd()) })).catch(() => {});
   server.stderr.pipeTo(new WritableStream({ write: (b) => log(dec.decode(b).trimEnd()) })).catch(() => {});

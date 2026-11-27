@@ -1,15 +1,17 @@
 // Routes every same-origin request outside /_shell/ to Drupal: the shell page
 // (/_shell/index.html, answered for every top-level page load) owns the VM and
 // answers over a MessageChannel.
+// "/" at a domain root, "/<repo>/" on GitHub Pages project sites.
+const BASE = new URL(self.registration.scope).pathname;
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   const url = new URL(req.url);
-  if (url.origin !== location.origin || url.pathname.startsWith("/_shell/") || url.pathname === "/sw.js") return;
+  if (url.origin !== location.origin || url.pathname.startsWith(BASE + "_shell/") || url.pathname === BASE + "sw.js") return;
   if (req.mode === "navigate" && req.destination === "document" && req.method === "GET") {
-    e.respondWith(fetch(new URL("/_shell/index.html", location.origin)));
+    e.respondWith(fetch(new URL(BASE + "_shell/index.html", location.origin)));
     return;
   }
   e.respondWith(toDrupal(req, url));

@@ -6,6 +6,8 @@ import { guestHttp, startDrupal } from "./drupal-vm.mjs";
 
 // The shell is served at whatever path the visitor opened; the iframe starts there.
 const START = location.pathname + location.search + location.hash;
+// "" at a domain root, "/<repo>" on GitHub Pages project sites.
+const BASE = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const IMAGE = new URL("drupal.ext4", import.meta.url).href;
 const DISK_NAME = "drupal-poc";
 const JAR_KEY = "drupal-poc-cookies";
@@ -87,7 +89,7 @@ async function clearAssetCaches() {
   for (const key of await caches.keys()) if (key.startsWith(ASSET_CACHE_PREFIX)) await caches.delete(key);
 }
 function cacheAsset(method, path, r) {
-  if (method !== "GET" || r.status !== 200 || !STATIC_ASSET.test(path.split("?")[0]) || path.startsWith("/system/files/")) return;
+  if (method !== "GET" || r.status !== 200 || !STATIC_ASSET.test(path.split("?")[0]) || path.startsWith(BASE + "/system/files/")) return;
   if (r.headers.some(([k, v]) => /^set-cookie$/i.test(k) || (/^cache-control$/i.test(k) && /no-store|private/i.test(v)))) return;
   const res = new Response(r.body.slice(), { status: 200, headers: r.headers.filter(([k]) => !DROP_RESPONSE.test(k)) });
   assetCache?.then((c) => c?.put(new Request(location.origin + path), res)).catch(() => {});
@@ -156,7 +158,8 @@ $("reset").addEventListener("click", async () => {
 });
 $("go").addEventListener("submit", (e) => {
   e.preventDefault();
-  $("site").src = $("path").value || "/";
+  const p = $("path").value || "/";
+  $("site").src = p.startsWith(BASE + "/") ? p : BASE + p;
 });
 $("site").addEventListener("load", () => {
   try {
@@ -173,7 +176,7 @@ async function boot() {
   if (!support.ok) throw new Error(`This browser can't run unkernel:\n${support.problems.join("\n")}`);
 
   step(2, "Registering service worker…");
-  await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+  await navigator.serviceWorker.register(BASE + "/sw.js", { scope: BASE + "/" });
   await navigator.serviceWorker.ready;
 
   const t0 = performance.now();
@@ -200,7 +203,7 @@ async function boot() {
   vm.exited.then(({ code, reason }) => status(`Linux exited (${reason ?? code})`, "error"));
 
   step(60, "Starting PHP…");
-  await startDrupal(vm, log);
+  await startDrupal(vm, log, BASE);
   log(`[boot] php -S ready after ${Math.round(performance.now() - t0)} ms`);
   markReady();
 

@@ -1,14 +1,16 @@
 // Static server for the browser PoC. Range requests are required: unkernel reads
 // drupal.ext4 lazily with HTTP Range (206 + Content-Range + ETag).
-//   /sw.js            the service worker (scope "/": every Drupal URL)
+// BASE=/x serves everything under that subpath like a GitHub Pages project site.
+//   /sw.js              the service worker (scope "/": every Drupal URL)
 //   /_shell/unkernel/*  node_modules/unkernel/dist/*
 //   /_shell/*           web/*
 //   anything else       the shell page (200, like Pages' 404.html: a first visit before the service worker)
 import { createServer } from "node:http";
-import { createReadStream, statSync } from "node:fs";
+import { createReadStream, readFileSync, statSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
 
 const PORT = Number(process.env.PORT ?? 8787);
+const BASE = process.env.BASE ?? "";
 const WEB = resolve("web");
 const UNKERNEL = resolve("node_modules/unkernel/dist");
 const TYPES = {
@@ -17,9 +19,9 @@ const TYPES = {
 };
 
 function resolveFile(pathname) {
-  if (pathname === "/sw.js") return resolve(WEB, "sw.js");
-  if (pathname.startsWith("/_shell/unkernel/")) return inside(UNKERNEL, pathname.slice("/_shell/unkernel/".length));
-  if (pathname.startsWith("/_shell/")) return inside(WEB, pathname.slice("/_shell/".length) || "index.html");
+  if (pathname === `${BASE}/sw.js`) return resolve(WEB, "sw.js");
+  if (pathname.startsWith(`${BASE}/_shell/unkernel/`)) return inside(UNKERNEL, pathname.slice(`${BASE}/_shell/unkernel/`.length));
+  if (pathname.startsWith(`${BASE}/_shell/`)) return inside(WEB, pathname.slice(`${BASE}/_shell/`.length) || "index.html");
   return resolve(WEB, "index.html");
 }
 function inside(base, rel) {
@@ -45,7 +47,15 @@ createServer((req, res) => {
     "Last-Modified": st.mtime.toUTCString(),
     "Cache-Control": "no-cache",
   };
-  if (pathname === "/sw.js") headers["Service-Worker-Allowed"] = "/";
+  if (pathname === `${BASE}/sw.js`) headers["Service-Worker-Allowed"] = `${BASE}/`;
+  if (extname(file) === ".html") {
+    // Like the Pages workflow: shell file URLs get the base path
+    const html = Buffer.from(readFileSync(file, "utf8").replaceAll('"/_shell/', `"${BASE}/_shell/`));
+    headers["ETag"] = `"${html.length}-${Math.trunc(st.mtimeMs)}"`;
+    headers["Content-Length"] = html.length;
+    res.writeHead(200, headers).end(req.method === "HEAD" ? undefined : html);
+    return;
+  }
 
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? "");
   let start = 0;

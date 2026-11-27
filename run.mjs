@@ -4,13 +4,16 @@
 //
 //   node run.mjs            serve db/drupal.sqlite (install it with ./install-site.sh)
 //   node run.mjs --warm     fill the site's caches, save the DB and exit (install-site.sh's last step)
+//   BASE_PATH=/x            serve (and warm) the site under a subpath, e.g. GitHub Pages /<repo>; WARM_HOST: Host for --warm
 import { createServer } from "node:net";
 import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { checkSupport, createKernel, nodeFs } from "unkernel";
+import { guestHttp, phpServer } from "./web/drupal-vm.mjs";
 
 const HOST_PORT = Number(process.env.PORT ?? 8888);
 const GUEST_PORT = 8000;
+const BASE_PATH = process.env.BASE_PATH ?? "";
 const PHP_DIR = resolve(process.env.PHP_DIR ?? "php-aarch64");
 const DRUPAL_DIR = resolve("drupal");
 const DB_DIR = resolve("db");
@@ -58,28 +61,13 @@ if ((await vm.exec("test", ["-f", "/db/drupal.sqlite"])).exitCode === 0) {
   await run(["cp", "/db/drupal.sqlite", DB]);
 }
 
-// php -S runs until the VM stops; don't await it.
-// -d: the CLI SAPI forces output_buffering=0 over php.ini; Drupal wants it on.
-const server = await vm.spawn(php[0], [...php.slice(1), "-d", "output_buffering=4096", "-S", `0.0.0.0:${GUEST_PORT}`,
-  "-t", "/app/web", "/app/web/.ht.router.php"], { pty: false, cwd: "/app/web" });
-server.stdout.pipeTo(new WritableStream({ write: (b) => process.stdout.write(b) }));
-server.stderr.pipeTo(new WritableStream({ write: (b) => process.stderr.write(b) }));
-
-// Wait until php -S is listening in the guest before accepting host connections.
-for (let ready = false; !ready;) {
-  try {
-    await (await vm.connect(GUEST_PORT)).close();
-    ready = true;
-  } catch {
-    await new Promise((ok) => setTimeout(ok, 200));
-  }
-}
+// php -S runs until the VM stops; wait until it listens before accepting host connections.
+const server = await phpServer(vm, { base: BASE_PATH, log: (l) => l && console.log(l) });
 
 // --warm (install-site.sh): fill Drupal's caches and the compiled Twig templates in the guest
 // (same /app paths as the image), save and exit. The cold front page takes ~3 min otherwise.
 // Not the image style derivatives: 16 widths per image at 10–20 s each.
 if (process.argv.includes("--warm")) {
-  const { guestHttp } = await import("./web/drupal-vm.mjs");
   const get = async (path) => {
     const t = Date.now();
     // Host: what the browser page sends (WARM_HOST = the deploy host), so the front page is also in Drupal's page cache
@@ -87,8 +75,8 @@ if (process.argv.includes("--warm")) {
     console.log(`[poc] warm ${path} → ${r.status} (${((Date.now() - t) / 1000).toFixed(1)} s)`);
     if (r.status >= 500) throw new Error(`warming ${path} failed with ${r.status}`);
   };
-  await get("/");
-  await get("/user/login");
+  await get(`${BASE_PATH}/`);
+  await get(`${BASE_PATH}/user/login`);
   await saveDb();
   await vm.sync().catch(() => {});
   process.exit(0);

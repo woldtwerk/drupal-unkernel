@@ -43,18 +43,21 @@ Changes (content, config, logins) persist across reloads in IndexedDB.
 
 ## GitHub Pages
 
-Needs a domain root (a `<user>.github.io` repo or a custom domain): under `/<repo>/` it breaks, since Drupal's router
-always uses base path `/`. Settings → Pages → Source: GitHub Actions. `web/drupal.ext4` (541 MB) is over git's
-limit and built from gitignored inputs, so build it locally and upload it as a release asset:
+Works on a project site (`https://<user>.github.io/<repo>/`) or a domain root. The workflow's `BASE_PATH` defaults to
+`/<repo>`: set it to `""` for a user site or custom domain. Settings → Pages → Source: GitHub Actions.
+`web/drupal.ext4` (541 MB) is over git's limit and built from gitignored inputs, so build it locally and upload it as a
+release asset. Warm it for the deploy host (Drupal's page cache is keyed by host):
 
 ```sh
-WARM_HOST=<host> pnpm install-site   # optional: warm the page cache for the deploy host
+BASE_PATH=/drupal-unkernel WARM_HOST=woldtwerk.github.io pnpm install-site   # BASE_PATH/WARM_HOST optional
 pnpm build-image
-gh release create image-$(date +%F) web/drupal.ext4
+gh release create image-$(date +%F) web/drupal.ext4   # or: gh release upload <tag> web/drupal.ext4 --clobber
 ```
 
 Publishing a release (or pushing `main`) deploys the latest release's image (`.github/workflows/pages.yml`).
-Range requests and the large file on Pages are untested.
+Range requests and the large file on Pages are untested. Local test of a subpath:
+`BASE=/drupal-unkernel pnpm serve` → http://127.0.0.1:8787/drupal-unkernel/. Under a subpath the guest runs
+`php -S` with its own router (`/srv/.router.php`), since Drupal's `.ht.router.php` forces base path `/`.
 
 ## Node
 
