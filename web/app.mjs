@@ -175,7 +175,7 @@ $("site").addEventListener("load", () => {
         if (a) fix(a);
       }, true);
     }
-    $("path").value = l.pathname + l.search;
+    $("path").value = (BASE && l.pathname.startsWith(BASE + "/") ? l.pathname.slice(BASE.length) : l.pathname) + l.search;
     history.replaceState(null, "", l.pathname + l.search + l.hash);
   } catch {}
 });
