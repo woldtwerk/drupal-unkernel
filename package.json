@@ -1,0 +1,23 @@
+{
+  "name": "drupal-wasm",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.18.0",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "^24.0.0",
+      "onFail": "download"
+    }
+  },
+  "scripts": {
+    "install-site": "node run.mjs --install",
+    "start": "node run.mjs",
+    "build-image": "./build-image.sh",
+    "serve": "node serve.mjs",
+    "drush": "node drush.mjs"
+  },
+  "dependencies": {
+    "unkernel": "0.2.0-261126-fd204d3"
+  }
+}

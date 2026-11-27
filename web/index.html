@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Drupal on unkernel</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5b6470; --line: #d9dde3;
+      --ok: #1a7f37; --busy: #9a6700; --error: #cf222e; --log-bg: #0f1419; --log-text: #c9d1d9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0d1117; --panel: #161b22; --text: #e6edf3; --muted: #8b949e; --line: #30363d;
+        --ok: #3fb950; --busy: #d29922; --error: #f85149;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: grid; grid-template-rows: auto 1fr; background: var(--bg); color: var(--text);
+      font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    body.show-log { grid-template-rows: auto 1fr 30vh; }
+    header {
+      display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 8px 16px;
+      background: var(--panel); border-bottom: 1px solid var(--line);
+    }
+    h1 { font-size: 15px; margin: 0; white-space: nowrap; }
+    #status { color: var(--muted); font-size: 13px; }
+    #status::before { content: "●"; margin-right: 6px; color: var(--busy); }
+    #status[data-state="ok"]::before { color: var(--ok); }
+    #status[data-state="error"] { color: var(--error); white-space: pre-wrap; }
+    #status[data-state="error"]::before { color: var(--error); }
+    form { display: flex; flex: 1 1 240px; gap: 6px; }
+    input {
+      flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
+      background: var(--bg); color: var(--text); font: 13px ui-monospace, monospace;
+    }
+    button {
+      padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel);
+      color: var(--text); font: inherit; font-size: 13px; cursor: pointer;
+    }
+    button:hover { border-color: var(--muted); }
+    iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+    #log {
+      display: none; margin: 0; padding: 8px 16px; overflow: auto; background: var(--log-bg);
+      color: var(--log-text); font: 12px/1.5 ui-monospace, monospace; border-top: 1px solid var(--line);
+    }
+    body.show-log #log { display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Drupal on unkernel</h1>
+    <span id="status" data-state="busy">Loading…</span>
+    <form id="go"><input id="path" value="/" aria-label="Drupal path"><button>Go</button></form>
+    <button id="toggle-log" type="button">Console</button>
+    <button id="reset" type="button">Reset site</button>
+  </header>
+  <iframe id="site" title="Drupal"></iframe>
+  <pre id="log"></pre>
+  <script type="module" src="app.mjs"></script>
+</body>
+</html>

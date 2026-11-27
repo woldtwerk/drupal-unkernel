@@ -1,0 +1,19 @@
+node_modules/
+
+# static-php-cli checkout and its build tree (the build config is php-aarch64/craft.yml)
+vendor-src/
+
+# build outputs
+php-aarch64/php
+web/drupal.ext4
+build/
+
+# the installed site's SQLite DB (recreate with `pnpm install-site`)
+db/
+
+# DDEV files generated per machine (drupal/.ddev/config.yaml stays tracked)
+drupal/.ddev/.dbimageBuild/
+drupal/.ddev/.webimageBuild/
+drupal/.ddev/.ddev-docker-compose-*.yaml
+
+# Composer-managed code, settings.php and files: see drupal/.gitignore (shipped by Drupal CMS)
