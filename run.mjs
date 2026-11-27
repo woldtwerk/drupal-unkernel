@@ -82,8 +82,8 @@ if (process.argv.includes("--warm")) {
   const { guestHttp } = await import("./web/drupal-vm.mjs");
   const get = async (path) => {
     const t = Date.now();
-    // Host: what the browser page sends, so the front page is also in Drupal's page cache
-    const r = await guestHttp(vm, { method: "GET", path, headers: [["Host", "127.0.0.1:8787"]], body: null });
+    // Host: what the browser page sends (WARM_HOST = the deploy host), so the front page is also in Drupal's page cache
+    const r = await guestHttp(vm, { method: "GET", path, headers: [["Host", process.env.WARM_HOST ?? "127.0.0.1:8787"]], body: null });
     console.log(`[poc] warm ${path} → ${r.status} (${((Date.now() - t) / 1000).toFixed(1)} s)`);
     if (r.status >= 500) throw new Error(`warming ${path} failed with ${r.status}`);
   };

@@ -1,0 +1,50 @@
+name: pages
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Download the image from the latest release
+        run: gh release download --pattern drupal.ext4 --dir web
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Assemble _site
+        run: |
+          mkdir -p _site/_shell
+          find web -mindepth 1 -maxdepth 1 ! -name sw.js -exec cp -r {} _site/_shell/ \;
+          cp -r node_modules/unkernel/dist _site/_shell/unkernel
+          cp web/sw.js _site/sw.js
+          cp web/index.html _site/index.html
+          cp web/index.html _site/404.html
+          touch _site/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

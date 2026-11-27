@@ -1,27 +1,44 @@
-// Routes every same-origin request outside /_poc/ to Drupal: the shell page
-// (/_poc/) owns the VM and answers over a MessageChannel.
+// Routes every same-origin request outside /_shell/ to Drupal: the shell page
+// (/_shell/index.html, answered for every top-level page load) owns the VM and
+// answers over a MessageChannel.
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 
 self.addEventListener("fetch", (e) => {
-  const url = new URL(e.request.url);
-  if (url.origin !== location.origin || url.pathname.startsWith("/_poc/") || url.pathname === "/sw.js") return;
-  e.respondWith(toDrupal(e.request, url));
+  const req = e.request;
+  const url = new URL(req.url);
+  if (url.origin !== location.origin || url.pathname.startsWith("/_shell/") || url.pathname === "/sw.js") return;
+  if (req.mode === "navigate" && req.destination === "document" && req.method === "GET") {
+    e.respondWith(fetch(new URL("/_shell/index.html", location.origin)));
+    return;
+  }
+  e.respondWith(toDrupal(req, url));
 });
 
+// The tab that owns the VM: remembered by id, else found by asking every top-level tab.
+let ownerId;
 async function shellClient() {
+  const known = ownerId && (await self.clients.get(ownerId));
+  if (known) return known;
   const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-  return all.find((c) => new URL(c.url).pathname.startsWith("/_poc/"));
+  const probes = all.filter((c) => c.frameType === "top-level").map((c) => new Promise((ok) => {
+    const { port1, port2 } = new MessageChannel();
+    port1.onmessage = (m) => ok(m.data ? c : null);
+    setTimeout(() => ok(null), 1000);
+    c.postMessage({ type: "drupal-owner?" }, [port2]);
+  }));
+  const found = await new Promise((ok) => {
+    let left = probes.length;
+    if (!left) ok(null);
+    for (const p of probes) p.then((c) => (c ? ok(c) : --left || ok(null)));
+  });
+  ownerId = found?.id;
+  return found ?? undefined;
 }
 
 async function toDrupal(req, url) {
   const shell = await shellClient();
-  if (!shell) {
-    // No VM running anywhere: open the shell page instead.
-    return req.mode === "navigate"
-      ? Response.redirect(new URL("/_poc/", location.origin), 302)
-      : new Response("Drupal VM not running: open /_poc/", { status: 503 });
-  }
+  if (!shell) return new Response("Drupal VM not running", { status: 503 });
   // Static assets the shell page cached earlier (see cacheAsset in app.mjs)
   if (req.method === "GET") {
     const hit = await caches.match(url.href);

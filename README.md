@@ -9,21 +9,21 @@ user programs, whatever the host CPU.
 ## Browser
 
 ```
-tab: /_poc/ (shell page)                                         service worker (scope /)
-├─ unkernel.wasm (Linux 7.3, base shell, 1 CPU) in a Web Worker    every same-origin URL outside /_poc/
+tab: any URL, e.g. /node/1 (shell page, files in /_shell/)       service worker (scope /)
+├─ unkernel.wasm (Linux 7.3, base shell, 1 CPU) in a Web Worker    top-level page loads → the shell page
 │  ├─ /dev/wda = drupal.ext4, label kwdata → /data                 → postMessage to the shell page
 │  │    lazy HTTP Range reads, copy-on-write overlay in IndexedDB  ← status, headers, body
 │  ├─ /app, /opt/php: bind mounts of /data/app, /data/php
 │  └─ php -S :8000  ← raw HTTP/1.0 over vm.connect() + cookie jar in the page
 ├─ Cache API: static assets (css/js/fonts/images) per image ETag     cached assets are answered here, no guest
-└─ <iframe src="/">  the Drupal site
+└─ <iframe src="/node/1">  the Drupal site; its URL is mirrored into the address bar
 ```
 
 ```sh
 pnpm install           # also fetches Node 24 for the scripts (devEngines.runtime)
 pnpm install-site      # once: native Drupal CMS install + cache warm-up in the guest (~7 min)
 pnpm build-image       # pack PHP + Drupal + DB into web/drupal.ext4 (sparse)
-pnpm serve             # http://127.0.0.1:8787/_poc/  (Chromium 137+ / JSPI)
+pnpm serve             # http://127.0.0.1:8787/  (Chromium 137+ / JSPI)
 ```
 
 `install-site` installs the Mercury Demo template (pinned in `install-site.sh`) in a throwaway copy of `drupal/`
@@ -40,6 +40,21 @@ files matched by `.imageignore` (tests, docs, lockfiles, dev tooling, recipes), 
 
 Login: `admin` / `admin` (local throwaway only). "Reset site" drops the IndexedDB overlay and cookies.
 Changes (content, config, logins) persist across reloads in IndexedDB.
+
+## GitHub Pages
+
+Needs a domain root (a `<user>.github.io` repo or a custom domain): under `/<repo>/` it breaks, since Drupal's router
+always uses base path `/`. Settings → Pages → Source: GitHub Actions. `web/drupal.ext4` (541 MB) is over git's
+limit and built from gitignored inputs, so build it locally and upload it as a release asset:
+
+```sh
+WARM_HOST=<host> pnpm install-site   # optional: warm the page cache for the deploy host
+pnpm build-image
+gh release create image-$(date +%F) web/drupal.ext4
+```
+
+Publishing a release (or pushing `main`) deploys the latest release's image (`.github/workflows/pages.yml`).
+Range requests and the large file on Pages are untested.
 
 ## Node
 

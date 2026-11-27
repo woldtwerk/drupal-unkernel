@@ -1,9 +1,9 @@
 // Static server for the browser PoC. Range requests are required: unkernel reads
 // drupal.ext4 lazily with HTTP Range (206 + Content-Range + ETag).
 //   /sw.js            the service worker (scope "/": every Drupal URL)
-//   /_poc/unkernel/*  node_modules/unkernel/dist/*
-//   /_poc/*           web/*
-//   anything else     only reached without the service worker: back to the shell page
+//   /_shell/unkernel/*  node_modules/unkernel/dist/*
+//   /_shell/*           web/*
+//   anything else       the shell page (200, like Pages' 404.html: a first visit before the service worker)
 import { createServer } from "node:http";
 import { createReadStream, statSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
@@ -18,9 +18,9 @@ const TYPES = {
 
 function resolveFile(pathname) {
   if (pathname === "/sw.js") return resolve(WEB, "sw.js");
-  if (pathname.startsWith("/_poc/unkernel/")) return inside(UNKERNEL, pathname.slice("/_poc/unkernel/".length));
-  if (pathname.startsWith("/_poc/")) return inside(WEB, pathname.slice("/_poc/".length) || "index.html");
-  return null;
+  if (pathname.startsWith("/_shell/unkernel/")) return inside(UNKERNEL, pathname.slice("/_shell/unkernel/".length));
+  if (pathname.startsWith("/_shell/")) return inside(WEB, pathname.slice("/_shell/".length) || "index.html");
+  return resolve(WEB, "index.html");
 }
 function inside(base, rel) {
   const file = resolve(base, decodeURIComponent(rel));
@@ -30,10 +30,6 @@ function inside(base, rel) {
 createServer((req, res) => {
   const { pathname } = new URL(req.url, "http://x");
   const file = resolveFile(pathname);
-  if (file === null) {
-    res.writeHead(302, { Location: "/_poc/" }).end();
-    return;
-  }
   let st;
   try {
     st = file && statSync(file);
@@ -67,4 +63,4 @@ createServer((req, res) => {
   res.writeHead(range ? 206 : 200, headers);
   if (req.method === "HEAD") res.end();
   else createReadStream(file, { start, end }).pipe(res);
-}).listen(PORT, "127.0.0.1", () => console.log(`Drupal on unkernel (browser): http://127.0.0.1:${PORT}/_poc/`));
+}).listen(PORT, "127.0.0.1", () => console.log(`Drupal on unkernel (browser): http://127.0.0.1:${PORT}/`));

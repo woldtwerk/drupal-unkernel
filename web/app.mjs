@@ -4,6 +4,8 @@
 import { checkSupport, createKernel, resetHttpDisk } from "./unkernel/web.mjs";
 import { guestHttp, startDrupal } from "./drupal-vm.mjs";
 
+// The shell is served at whatever path the visitor opened; the iframe starts there.
+const START = location.pathname + location.search + location.hash;
 const IMAGE = new URL("drupal.ext4", import.meta.url).href;
 const DISK_NAME = "drupal-poc";
 const JAR_KEY = "drupal-poc-cookies";
@@ -107,7 +109,10 @@ const scheduleSync = () => {
 const DROP_REQUEST = /^(host|cookie|connection|content-length|accept-encoding|keep-alive|transfer-encoding)$/i;
 const DROP_RESPONSE = /^(set-cookie|connection|transfer-encoding|keep-alive)$/i;
 
+// One tab owns the VM (and the IndexedDB overlay); sw.js asks which one before routing to it.
+let owner = false;
 navigator.serviceWorker.addEventListener("message", async (e) => {
+  if (e.data?.type === "drupal-owner?") return e.ports[0].postMessage(owner);
   if (e.data?.type !== "drupal-http") return;
   const port = e.ports[0];
   const { method, path, headers, body } = e.data;
@@ -156,7 +161,9 @@ $("go").addEventListener("submit", (e) => {
 $("site").addEventListener("load", () => {
   try {
     const l = $("site").contentWindow.location;
+    if (l.href === "about:blank") return;
     $("path").value = l.pathname + l.search;
+    history.replaceState(null, "", l.pathname + l.search + l.hash);
   } catch {}
 });
 $("toggle-log").addEventListener("click", () => document.body.classList.toggle("show-log"));
@@ -203,7 +210,7 @@ async function boot() {
   const t1 = performance.now();
   const detail = () => (inflight ? `${inflight} request${inflight > 1 ? "s" : ""} in flight` : "");
   step(75, "Loading the first page (cold caches, can take a minute or more)…", detail());
-  $("site").src = "/";
+  $("site").src = START;
   const creep = setInterval(() => {
     const doc = $("site").contentDocument;
     if (doc && doc.URL !== "about:blank" && doc.readyState !== "loading") {
@@ -219,7 +226,15 @@ async function boot() {
   addEventListener("pagehide", () => inflight || vm.sync());
 }
 
-boot().catch((err) => {
+// Hold the lock for the page's lifetime once booted; a failed boot releases it for another tab.
+step(0, "Drupal is running in another tab: close it, or use that tab");
+navigator.locks.request("drupal-vm", async () => {
+  owner = true;
+  step(0, "Loading…");
+  await boot();
+  await new Promise(() => {});
+}).catch((err) => {
+  owner = false;
   console.error(err);
   status(err.message, "error");
   clearInterval(bootClock);
