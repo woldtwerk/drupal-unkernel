@@ -2,8 +2,8 @@
 // static aarch64 PHP and the Drupal codebase over 9p, runs PHP's built-in web
 // server inside the guest and forwards http://127.0.0.1:$PORT to it.
 //
-//   node run.mjs            serve the site
-//   node run.mjs --install  (re)install Drupal into SQLite inside the guest first
+//   node run.mjs            serve db/drupal.sqlite (install it with ./install-site.sh)
+//   node run.mjs --warm     fill the site's caches, save the DB and exit (install-site.sh's last step)
 import { createServer } from "node:net";
 import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -15,7 +15,6 @@ const PHP_DIR = resolve(process.env.PHP_DIR ?? "php-aarch64");
 const DRUPAL_DIR = resolve("drupal");
 const DB_DIR = resolve("db");
 mkdirSync(DB_DIR, { recursive: true });
-const install = process.argv.includes("--install");
 
 if (!existsSync(`${PHP_DIR}/php`)) throw new Error(`no static aarch64 php in ${PHP_DIR}`);
 const support = await checkSupport();
@@ -55,20 +54,8 @@ const saveDb = async () => {
     `rm -f /db/drupal.sqlite.tmp && cp ${DB} /db/drupal.sqlite.tmp && mv -f /db/drupal.sqlite.tmp /db/drupal.sqlite`]);
 };
 await run(["mkdir", "-p", "/var/lib/drupal"]);
-if (!install && (await vm.exec("test", ["-f", "/db/drupal.sqlite"])).exitCode === 0) {
+if ((await vm.exec("test", ["-f", "/db/drupal.sqlite"])).exitCode === 0) {
   await run(["cp", "/db/drupal.sqlite", DB]);
-}
-
-if (install) {
-  const t = Date.now();
-  // Drupal CMS: install from the Mercury Demo site template (composer require drupal/mercury_demo).
-  await run([...php, "-d", "memory_limit=1G", "/app/vendor/drush/drush/drush.php",
-    "site:install", "/app/recipes/mercury_demo", "-y",
-    `--db-url=sqlite://localhost/${DB}`,
-    "--site-name=Drupal CMS on unkernel", "--account-name=admin", "--account-pass=admin"],
-    { cwd: "/app/web" });
-  console.log(`[poc] drush site:install took ${((Date.now() - t) / 1000).toFixed(1)} s`);
-  await saveDb();
 }
 
 // php -S runs until the VM stops; don't await it.
@@ -86,6 +73,25 @@ for (let ready = false; !ready;) {
   } catch {
     await new Promise((ok) => setTimeout(ok, 200));
   }
+}
+
+// --warm (install-site.sh): fill Drupal's caches and the compiled Twig templates in the guest
+// (same /app paths as the image), save and exit. The cold front page takes ~3 min otherwise.
+// Not the image style derivatives: 16 widths per image at 10–20 s each.
+if (process.argv.includes("--warm")) {
+  const { guestHttp } = await import("./web/drupal-vm.mjs");
+  const get = async (path) => {
+    const t = Date.now();
+    // Host: what the browser page sends, so the front page is also in Drupal's page cache
+    const r = await guestHttp(vm, { method: "GET", path, headers: [["Host", "127.0.0.1:8787"]], body: null });
+    console.log(`[poc] warm ${path} → ${r.status} (${((Date.now() - t) / 1000).toFixed(1)} s)`);
+    if (r.status >= 500) throw new Error(`warming ${path} failed with ${r.status}`);
+  };
+  await get("/");
+  await get("/user/login");
+  await saveDb();
+  await vm.sync().catch(() => {});
+  process.exit(0);
 }
 
 // Host TCP -> guest TCP (same approach as unkernel's CLI --forward).

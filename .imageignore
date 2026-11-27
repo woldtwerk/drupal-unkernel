@@ -1,0 +1,79 @@
+# rsync exclude patterns for drupal/ -> drupal.ext4 (see build-image.sh).
+# Leading / anchors to drupal/, trailing / matches directories only.
+# Not listed here, done by build-image.sh: disabled modules/themes/profiles and
+# Composer dev packages (Drush) are removed, composer.json after the autoload dump.
+# rsync takes the first matching rule: the + (keep) rules must stay on top.
+
+# keep: licenses (the image is distributed)
++ LICENSE*
++ COPYING*
++ NOTICE*
+# keep: read at runtime (Canvas' Version service, library version detection,
+# README.md in hook_help() and SDC component docs)
++ /web/modules/contrib/canvas/ui/package.json
++ /web/libraries/*/package.json
++ /web/**.md
++ /web/**/README*
+# keep: drupal_cms_helper autoloads tests/src/Traits outside autoload-dev (dump-autoload fails without it)
++ /web/modules/contrib/drupal_cms_helper/tests/
++ /web/modules/contrib/drupal_cms_helper/tests/src/
++ /web/modules/contrib/drupal_cms_helper/tests/src/Traits/***
+- /web/modules/contrib/drupal_cms_helper/tests/**
+
+# project dev files, install-time recipes
+/.ddev/
+/drush/
+/recipes/
+/web/core/recipes/
+/web/core/scripts/
+/web/core/assets/scaffold/
+/web/sites/simpletest/
+/web/sites/example.*
+/web/sites/*/default.settings.php
+/web/sites/*/default.services.yml
+/vendor/bin/
+/vendor/*/*/doc/
+/vendor/*/*/docs/
+
+# tests
+tests/
+phpunit.xml*
+.phpunit*
+
+# VCS, CI, linters, JS tooling
+.git/
+.github/
+.gitlab/
+.gitlab-ci.yml
+.gitignore
+.gitattributes
+.editorconfig
+.eslintrc*
+.eslintignore
+.prettierrc*
+.prettierignore
+.stylelintrc*
+.cspell.json
+.travis.yml
+.nvmrc
+.yarnrc*
+phpcs.xml*
+.phpcs.xml*
+phpstan*.neon*
+psalm.xml*
+node_modules/
+package.json
+package-lock.json
+yarn.lock
+composer.lock
+
+# docs (hook documentation in *.api.php is never loaded)
+*.api.php
+*.md
+README*
+CHANGELOG*
+UPGRADE*
+INSTALL*.txt
+UPDATE.txt
+MAINTAINERS.txt
+*.map

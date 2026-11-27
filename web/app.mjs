@@ -1,22 +1,43 @@
 // Shell page: boots unkernel in this tab, mounts drupal.ext4 (lazy HTTP Range reads,
 // copy-on-write overlay persisted in IndexedDB), runs php -S in the guest and
 // answers the service worker's requests for Drupal URLs.
-import { checkSupport, createKernel, openHttpDisk, resetHttpDisk } from "./unkernel/web.mjs";
+import { checkSupport, createKernel, resetHttpDisk } from "./unkernel/web.mjs";
 import { guestHttp, startDrupal } from "./drupal-vm.mjs";
 
 const IMAGE = new URL("drupal.ext4", import.meta.url).href;
 const DISK_NAME = "drupal-poc";
 const JAR_KEY = "drupal-poc-cookies";
+// Static assets Drupal serves are cached here and answered by sw.js without the guest.
+// One cache per image version (its ETag), so a rebuilt image never serves stale files.
+const ASSET_CACHE_PREFIX = "drupal-assets-";
+const STATIC_ASSET = /\.(css|js|mjs|woff2?|ttf|otf|svg|png|jpe?g|gif|webp|avif|ico)$/i;
+let assetCache; // Promise<Cache | null>
+const LOG_LINES = 500;
 
 const $ = (id) => document.getElementById(id);
 const status = (text, state = "busy") => {
   $("status").textContent = text;
   $("status").dataset.state = state;
 };
+// Boot overlay: pct 0–100, text also goes to the header status.
+const bootStart = performance.now();
+const bootClock = setInterval(() => {
+  $("boot-time").textContent = `${Math.round((performance.now() - bootStart) / 1000)} s`;
+}, 250);
+const step = (pct, text, detail = "") => {
+  if (text) status(text);
+  $("boot-step").textContent = text ?? $("boot-step").textContent;
+  $("boot-detail").textContent = detail;
+  $("boot-fill").style.width = `${pct}%`;
+  $("boot-fill").parentElement.setAttribute("aria-valuenow", Math.round(pct));
+};
+const MB = (n) => (n / 2 ** 20).toFixed(1);
 const log = (line) => {
   if (!line) return;
   const el = $("log");
-  el.textContent += line + "\n";
+  // Capped: a growing text node is re-laid out on every request.
+  const lines = (el.textContent + line + "\n").split("\n");
+  el.textContent = lines.slice(-LOG_LINES - 1).join("\n");
   el.scrollTop = el.scrollHeight;
 };
 
@@ -49,14 +70,38 @@ function storeCookie(setCookie) {
   saveJar();
 }
 
+async function openAssetCache() {
+  try {
+    const head = await fetch(IMAGE, { method: "HEAD", cache: "no-store" });
+    const name = ASSET_CACHE_PREFIX + (head.headers.get("etag") ?? "").replace(/\W/g, "");
+    for (const key of await caches.keys()) if (key.startsWith(ASSET_CACHE_PREFIX) && key !== name) await caches.delete(key);
+    return await caches.open(name);
+  } catch (err) {
+    log(`asset cache off: ${err.message}`);
+    return null;
+  }
+}
+async function clearAssetCaches() {
+  for (const key of await caches.keys()) if (key.startsWith(ASSET_CACHE_PREFIX)) await caches.delete(key);
+}
+function cacheAsset(method, path, r) {
+  if (method !== "GET" || r.status !== 200 || !STATIC_ASSET.test(path.split("?")[0]) || path.startsWith("/system/files/")) return;
+  if (r.headers.some(([k, v]) => /^set-cookie$/i.test(k) || (/^cache-control$/i.test(k) && /no-store|private/i.test(v)))) return;
+  const res = new Response(r.body.slice(), { status: 200, headers: r.headers.filter(([k]) => !DROP_RESPONSE.test(k)) });
+  assetCache?.then((c) => c?.put(new Request(location.origin + path), res)).catch(() => {});
+}
+
 // --- VM
 let vm;
 let markReady;
 const ready = new Promise((ok) => (markReady = ok));
 let syncTimer;
+let inflight = 0; // Drupal requests from the service worker not answered yet
 const scheduleSync = () => {
   clearTimeout(syncTimer);
-  syncTimer = setTimeout(() => vm.sync().catch((e) => log(`sync: ${e.message}`)), 1000);
+  // Only while no request runs: GETs write too (caches), and a save cut short by a reload
+  // leaves a torn SQLite file in the overlay ("database disk image is malformed").
+  syncTimer = setTimeout(() => (inflight ? scheduleSync() : vm.sync().catch((e) => log(`sync: ${e.message}`))), 1000);
 };
 
 const DROP_REQUEST = /^(host|cookie|connection|content-length|accept-encoding|keep-alive|transfer-encoding)$/i;
@@ -67,6 +112,7 @@ navigator.serviceWorker.addEventListener("message", async (e) => {
   const port = e.ports[0];
   const { method, path, headers, body } = e.data;
   const t0 = performance.now();
+  inflight++;
   try {
     await ready;
     const h = headers.filter(([k]) => !DROP_REQUEST.test(k));
@@ -74,6 +120,7 @@ navigator.serviceWorker.addEventListener("message", async (e) => {
     if (jar.size) h.push(["Cookie", [...jar].map(([k, v]) => `${k}=${v}`).join("; ")]);
     const r = await guestHttp(vm, { method, path, headers: h, body });
     for (const [k, v] of r.headers) if (/^set-cookie$/i.test(k)) storeCookie(v);
+    cacheAsset(method, path, r);
     const out = r.body.slice().buffer;
     port.postMessage({
       status: r.status,
@@ -82,10 +129,12 @@ navigator.serviceWorker.addEventListener("message", async (e) => {
       body: out,
     }, [out]);
     log(`${method} ${path} → ${r.status} (${Math.round(performance.now() - t0)} ms)`);
-    if (!["GET", "HEAD"].includes(method)) scheduleSync();
+    scheduleSync();
   } catch (err) {
     log(`${method} ${path} failed: ${err.message}`);
     port.postMessage({ status: 502, statusText: "Bad Gateway", headers: [["content-type", "text/plain"]], body: `guest: ${err.message}` });
+  } finally {
+    inflight--;
   }
 });
 navigator.serviceWorker.startMessages();
@@ -95,6 +144,7 @@ $("reset").addEventListener("click", async () => {
   status("Resetting…");
   await vm?.stop().catch(() => {});
   await resetHttpDisk(DISK_NAME);
+  await clearAssetCaches().catch(() => {});
   jar.clear();
   saveJar();
   location.reload();
@@ -115,36 +165,66 @@ async function boot() {
   const support = await checkSupport();
   if (!support.ok) throw new Error(`This browser can't run unkernel:\n${support.problems.join("\n")}`);
 
-  status("Registering service worker…");
+  step(2, "Registering service worker…");
   await navigator.serviceWorker.register("/sw.js", { scope: "/" });
   await navigator.serviceWorker.ready;
 
   const t0 = performance.now();
-  status("Opening disk image…");
-  const disk = await openHttpDisk(IMAGE, { name: DISK_NAME });
-  status("Booting Linux…");
+  assetCache = openAssetCache();
+  step(10, "Loading Linux…");
+  // In a Web Worker: on this thread the CPU emulation would compete with the site's rendering
+  // and with answering the service worker. The overlay is the same IndexedDB store as before.
   vm = await createKernel({
-    disks: [disk],
+    worker: true,
+    disks: [{ kind: "http", url: IMAGE, persist: DISK_NAME }],
     memoryMiB: 1024,
     memoryFallbackMiB: [768, 512],
-    onProgress: (p) => log(`[boot] ${p.stage}`),
+    onProgress: (p) => {
+      if (p.stage === "download") {
+        if (p.total) step(10 + 30 * (p.loaded / p.total), "Downloading Linux…", `${MB(p.loaded)} / ${MB(p.total)} MB`);
+        return;
+      }
+      log(`[boot] ${p.stage}`);
+      const stages = { compile: [42, "Compiling Linux…"], memory: [50, "Booting Linux…"], instantiate: [52], start: [55] };
+      if (stages[p.stage]) step(...stages[p.stage]);
+    },
   });
   log(`[boot] kernel up in ${Math.round(performance.now() - t0)} ms`);
   vm.exited.then(({ code, reason }) => status(`Linux exited (${reason ?? code})`, "error"));
 
-  status("Starting PHP…");
+  step(60, "Starting PHP…");
   await startDrupal(vm, log);
   log(`[boot] php -S ready after ${Math.round(performance.now() - t0)} ms`);
   markReady();
 
-  status("Running", "ok");
+  // The first page has no measurable progress (cold PHP and Drupal caches, a minute or more):
+  // creep from 75 % towards 98 % until its HTML is parsed. Not the iframe's load event: that
+  // also waits for images, and every cold image style derivative takes many seconds.
+  const t1 = performance.now();
+  const detail = () => (inflight ? `${inflight} request${inflight > 1 ? "s" : ""} in flight` : "");
+  step(75, "Loading the first page (cold caches, can take a minute or more)…", detail());
   $("site").src = "/";
-  addEventListener("pagehide", () => vm.sync());
+  const creep = setInterval(() => {
+    const doc = $("site").contentDocument;
+    if (doc && doc.URL !== "about:blank" && doc.readyState !== "loading") {
+      clearInterval(creep);
+      clearInterval(bootClock);
+      step(100, "Running");
+      status("Running", "ok");
+      $("boot").classList.add("done");
+      return;
+    }
+    step(75 + 23 * (1 - Math.exp(-(performance.now() - t1) / 30000)), null, detail());
+  }, 250);
+  addEventListener("pagehide", () => inflight || vm.sync());
 }
 
 boot().catch((err) => {
   console.error(err);
   status(err.message, "error");
+  clearInterval(bootClock);
+  $("boot").classList.add("error");
+  $("boot-step").textContent = err.message;
   log(err.stack ?? String(err));
   document.body.classList.add("show-log");
 });

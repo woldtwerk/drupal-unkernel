@@ -10,7 +10,30 @@ STAGE=build/rootfs
 OUT=web/drupal.ext4
 [ -d build ] && chmod -R u+w build; rm -rf build
 mkdir -p "$STAGE/app" "$STAGE/php" "$STAGE/db"
-cp -a --reflink=auto drupal/. "$STAGE/app/"
+rsync -a --exclude-from=.imageignore drupal/ "$STAGE/app/"
+
+# Drop modules/themes/profiles the site doesn't have installed (core.extension).
+# Only these types: e.g. core's twig theme_engine never shows up in core.extension.
+ENABLED=$(php -r '$d = unserialize((new PDO("sqlite:" . $argv[1]))
+  ->query("SELECT data FROM config WHERE collection = \"\" AND name = \"core.extension\"")->fetchColumn());
+  echo implode("\n", [...array_keys($d["module"]), ...array_keys($d["theme"]), $d["profile"] ?? ""]);' db/drupal.sqlite)
+keep=() drop=()
+while IFS= read -r info; do
+  grep -qE "^type: *[\"']?(module|theme|profile)[\"']? *$" "$info" || continue
+  if grep -qxF "$(basename "$info" .info.yml)" <<<"$ENABLED"; then keep+=("$(dirname "$info")/"); else drop+=("$(dirname "$info")/"); fi
+done < <(find "$STAGE/app/web" -name '*.info.yml')
+for d in "${drop[@]}"; do
+  for k in "${keep[@]}"; do [[ $k == "$d"* ]] && continue 2; done # holds an installed submodule
+  rm -rf "$d"
+done
+
+# Drop Composer dev packages (Drush) and rebuild the autoloader without them
+php -r '$j = json_decode(file_get_contents($argv[1]), true);
+  foreach ($j["packages"] as $p) if (in_array($p["name"], $j["dev-package-names"])) echo dirname($argv[1]), "/", $p["install-path"], "\n";' \
+  "$STAGE/app/vendor/composer/installed.json" | xargs -r rm -rf
+composer --working-dir="$STAGE/app" dump-autoload --no-dev --optimize --no-scripts --quiet
+rm "$STAGE/app/composer.json"
+
 cp php-aarch64/php php-aarch64/php.ini "$STAGE/php/"
 cp db/drupal.sqlite "$STAGE/db/"
 

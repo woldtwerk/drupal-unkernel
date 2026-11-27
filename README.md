@@ -10,20 +10,33 @@ user programs, whatever the host CPU.
 
 ```
 tab: /_poc/ (shell page)                                         service worker (scope /)
-├─ unkernel.wasm (Linux 7.3, base shell, 1 CPU)                    every same-origin URL outside /_poc/
+├─ unkernel.wasm (Linux 7.3, base shell, 1 CPU) in a Web Worker    every same-origin URL outside /_poc/
 │  ├─ /dev/wda = drupal.ext4, label kwdata → /data                 → postMessage to the shell page
 │  │    lazy HTTP Range reads, copy-on-write overlay in IndexedDB  ← status, headers, body
 │  ├─ /app, /opt/php: bind mounts of /data/app, /data/php
 │  └─ php -S :8000  ← raw HTTP/1.0 over vm.connect() + cookie jar in the page
+├─ Cache API: static assets (css/js/fonts/images) per image ETag     cached assets are answered here, no guest
 └─ <iframe src="/">  the Drupal site
 ```
 
 ```sh
 pnpm install           # also fetches Node 24 for the scripts (devEngines.runtime)
-pnpm install-site      # once: Drupal CMS install inside the guest under Node (~8 min), writes db/drupal.sqlite
-pnpm build-image       # pack PHP + Drupal + DB into web/drupal.ext4 (sparse, ~690 MiB / ~490 MB data)
+pnpm install-site      # once: native Drupal CMS install + cache warm-up in the guest (~7 min)
+pnpm build-image       # pack PHP + Drupal + DB into web/drupal.ext4 (sparse)
 pnpm serve             # http://127.0.0.1:8787/_poc/  (Chromium 137+ / JSPI)
 ```
+
+`install-site` installs the Mercury Demo template (pinned in `install-site.sh`) in a throwaway copy of `drupal/`
+with the packages it requires, uninstalls every module `drupal/` doesn't ship (plus a few core ones), and keeps only
+the DB, `settings.php` and public files: reproducible from a fresh clone. Every image style derivative is
+generated natively there (~2.5 min, ~14 MB; in the guest each takes seconds), as WebP where a style asks for AVIF,
+since the guest's GD has no AVIF. It then warms Drupal's caches in the
+guest (`node run.mjs --warm`, at the image's `/app` paths): the browser's first page drops from ~2–3 min to ~30 s.
+
+`install-site` and `build-image` need host `php` (pdo_sqlite), `composer`, `rsync` and `mke2fs` (e2fsprogs;
+keg-only in Homebrew: add `$(brew --prefix e2fsprogs)/sbin` to `PATH`). `build-image` packs only what the site runs:
+files matched by `.imageignore` (tests, docs, lockfiles, dev tooling, recipes), modules/themes not installed in
+`db/drupal.sqlite` and Composer dev packages (Drush) stay out, so the browser's Extend page can't enable them.
 
 Login: `admin` / `admin` (local throwaway only). "Reset site" drops the IndexedDB overlay and cookies.
 Changes (content, config, logins) persist across reloads in IndexedDB.
@@ -44,6 +57,8 @@ To remove a module for good: uninstall it with Drush, `composer remove` it in `d
 then `pnpm build-image` (browsers drop their old overlay when the image changes).
 
 ## Rebuild PHP
+
+`pnpm build-php` runs these steps (needed once before `install-site`, or after changing `craft.yml`):
 
 ```sh
 git clone https://github.com/crazywhalecc/static-php-cli.git vendor-src/static-php-cli
@@ -76,7 +91,8 @@ pdo_sqlite phar posix session simplexml sodium sqlite3 tokenizer xml xmlreader x
 - **ext4 image:** the Drupal CMS tree is ~51k files and directories; inode count is sized from the tree.
 - **Speed (this machine):** install native 30 s vs. guest 480 s (~15×). Browser: shell boots in ~1 s, first
   page ~40 s cold, admin pages 15–45 s cold, warm cached pages ~50–90 ms. `php -S` serves one request at a time,
-  so assets queue behind PHP requests on cold loads.
+  so assets queue behind PHP requests on cold loads. Static assets are cached in the browser after their
+  first fetch, so repeat views don't touch the guest for them.
 
 ## Licenses
 

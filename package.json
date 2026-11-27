@@ -11,8 +11,9 @@
     }
   },
   "scripts": {
-    "install-site": "node run.mjs --install",
+    "install-site": "./install-site.sh",
     "start": "node run.mjs",
+    "build-php": "./build-php.sh",
     "build-image": "./build-image.sh",
     "serve": "node serve.mjs",
     "drush": "node drush.mjs"

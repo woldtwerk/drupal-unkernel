@@ -22,6 +22,11 @@ async function toDrupal(req, url) {
       ? Response.redirect(new URL("/_poc/", location.origin), 302)
       : new Response("Drupal VM not running: open /_poc/", { status: 503 });
   }
+  // Static assets the shell page cached earlier (see cacheAsset in app.mjs)
+  if (req.method === "GET") {
+    const hit = await caches.match(url.href);
+    if (hit) return hit;
+  }
   const body = ["GET", "HEAD"].includes(req.method) ? null : new Uint8Array(await req.arrayBuffer());
   const { port1, port2 } = new MessageChannel();
   const reply = new Promise((ok) => (port1.onmessage = (m) => ok(m.data)));
