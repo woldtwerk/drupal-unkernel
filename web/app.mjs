@@ -165,6 +165,16 @@ $("site").addEventListener("load", () => {
   try {
     const l = $("site").contentWindow.location;
     if (l.href === "about:blank") return;
+    // Theme templates (Mercury's logo) hardcode href="/", which would leave the service worker's scope.
+    if (BASE) {
+      const doc = $("site").contentDocument;
+      const fix = (a) => a.setAttribute("href", BASE + "/");
+      doc.querySelectorAll('a[href="/"]').forEach(fix);
+      doc.addEventListener("click", (e) => {
+        const a = e.target.closest?.('a[href="/"]');
+        if (a) fix(a);
+      }, true);
+    }
     $("path").value = l.pathname + l.search;
     history.replaceState(null, "", l.pathname + l.search + l.hash);
   } catch {}
