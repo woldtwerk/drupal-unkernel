@@ -68,6 +68,11 @@ pdo_sqlite phar posix session simplexml sodium sqlite3 tokenizer xml xmlreader x
   `define_breakpoints` model provides the `custom` breakpoint group, so uninstalling it deleted all 29 responsive
   image styles and disabled `field_media_image` on the media image displays: media images won't render in those
   displays until breakpoints and responsive styles are recreated.
+- **Also removed:** Announcements, Automatic Updates, Autosave Form, BigPipe, Dashboard, Database Logging,
+  Symfony Mailer Lite, Drupical, Navigation Extra Tools, Package Manager, Project Browser, Redirect 404,
+  Scheduler Content Moderation Integration, SEO Checklist (+ Checklist API), Trash, Update Status, View Password.
+  Core modules are only uninstalled; contrib packages are `composer remove`d. Mail System now uses core's
+  `php_mail` instead of `symfony_mailer_lite`.
 - **ext4 image:** the Drupal CMS tree is ~51k files and directories; inode count is sized from the tree.
 - **Speed (this machine):** install native 30 s vs. guest 480 s (~15×). Browser: shell boots in ~1 s, first
   page ~40 s cold, admin pages 15–45 s cold, warm cached pages ~50–90 ms. `php -S` serves one request at a time,
